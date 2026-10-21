@@ -1,40 +1,341 @@
-(function() {
-    'use strict';
-    // https://lampaplugins.github.io/store/store.js
-	Lampa.Lang.add({
-        my_store: {
-            ru: "Пиратские плагины",
-            en: "Pirate Store",
-            uk: "Піратські плагіни",
-            be: "Пірацкія плагіны",
-            zh: "盜版插件",
-            pt: "Pirate Store",
-            bg: "Пиратски добавки",
-			he: "תוספים פיראטיים"
-        }
-    });
-    function addStore() {
-        if (Lampa.Settings.main && !Lampa.Settings.main().render().find('[data-component="pirate_store"]').length) {
-            var field = "<div class=\"settings-folder selector\" data-component=\"pirate_store\" data-static=\"true\">\n\t\t\t<div class=\"settings-folder__icon\">\n\t\t\t\t<svg xmlns=\"http://www.w3.org/2000/svg\" version=\"1.1\" xmlns:xlink=\"http://www.w3.org/1999/xlink\" width=\"512\" height=\"512\" x=\"0\" y=\"0\" viewBox=\"0 0 490 490\" xml:space=\"preserve\"><path d=\"M153.125 317.435h183.75v30.625h-183.75z\" fill=\"white\"></path><circle cx=\"339.672\" cy=\"175.293\" r=\"42.642\" fill=\"white\"></circle><path d=\"M420.914 0H69.086C30.999 0 0 30.999 0 69.086v351.829C0 459.001 30.999 490 69.086 490h351.829C459.001 490 490 459.001 490 420.914V69.086C490 30.999 459.001 0 420.914 0zM69.086 30.625h237.883c-17.146 20.912-42.277 47.893-75.177 74.575-9.514-12.906-26.35-19.331-42.586-14.613l-69.644 20.242c-20.778 6.039-32.837 27.98-26.798 48.758l6.475 22.278c-21.375 8-44.353 14.456-68.614 19.267V69.086c0-21.204 17.257-38.461 38.461-38.461zm390.289 390.289c0 21.204-17.257 38.461-38.461 38.461H69.086c-21.204 0-38.461-17.257-38.461-38.461V232.459c27.504-4.993 53.269-12.075 77.268-20.816l3.811 13.111c6.038 20.778 27.98 32.837 48.758 26.799l69.643-20.242c20.778-6.039 32.837-27.98 26.799-48.758l-13.481-46.382c50.532-39.47 84.67-80.759 102.687-105.546h74.805c21.204 0 38.461 17.257 38.461 38.461v351.828z\" fill=\"white\"></path></svg>\n\t\t\t</div>\n\t\t\t<div class=\"settings-folder__name\">"+Lampa.Lang.translate('pirate_store')+"</div>\n\t\t</div>";
-            Lampa.Settings.main().render().find('[data-component="more"]').after(field);
-            Lampa.Settings.main().update();
-        }
-    }
-    Lampa.Settings.listener.follow('open', function(e) {
-        if (e.name == 'main') {
-            e.body.find('[data-component="my_store"]').on('hover:enter', function() {
-                Lampa.Extensions.show({
-                    store: 'https://lampaplugins.github.io/store/extensions.json',
-                    with_installed: true
-                });
-            });
-        }
-    });
-    if (window.appready) addStore();
-    else {
-        Lampa.Listener.follow('app', function(e) {
-            if (e.type == 'ready') addStore();
-        });
-    }
+/*
+ * Мой магазин расширений для Lampa
+ * Подключение в Lampa: https://salexey1.github.io/la/store.js
+ * Каталог:             https://salexey1.github.io/la/extensions.json
+ *
+ * Что делает: добавляет пункт «Мой магазин» в левое меню и в настройки,
+ * читает каталог по ссылке и позволяет установить, включить/выключить
+ * и удалить расширения из него. Код написан в стиле ES5 для старых ТВ-браузеров.
+ */
+(function () {
+  'use strict';
 
+  if (window.my_lampa_store_loaded) return;
+  window.my_lampa_store_loaded = true;
+
+  var CONFIG = {
+    name: 'Мой магазин',
+    catalog: 'https://salexey1.github.io/la/extensions.json',
+    timeout: 15000
+  };
+
+  var ICON = '<svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">' +
+    '<path d="M4 7h16l-1.2 12.1a1 1 0 0 1-1 .9H6.2a1 1 0 0 1-1-.9L4 7z" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/>' +
+    '<path d="M8 7V6a4 4 0 0 1 8 0v1" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>';
+
+  var catalogCache = null;   // последний успешно загруженный каталог
+  var activeRequest = null;
+
+  /* ---------- мелкие помощники ---------- */
+
+  function esc(s) {
+    return String(s == null ? '' : s).replace(/[&<>"]/g, function (c) {
+      return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c];
+    });
+  }
+
+  function cut(s, n) {
+    s = String(s || '');
+    return s.length > n ? s.slice(0, n - 1) + '…' : s;
+  }
+
+  function key(url) {
+    return String(url || '').split('#')[0].split('?')[0].toLowerCase();
+  }
+
+  function noty(text) {
+    try { Lampa.Noty.show(text); } catch (e) { /* без уведомления можно жить */ }
+  }
+
+  /* ---------- список установленных плагинов ---------- */
+
+  function getPlugins() {
+    var list = Lampa.Storage.get('plugins', '[]');
+    if (typeof list === 'string') {
+      try { list = JSON.parse(list); } catch (e) { list = []; }
+    }
+    return Array.isArray(list) ? list : [];
+  }
+
+  function savePlugins(list) {
+    Lampa.Storage.set('plugins', list);
+  }
+
+  function findInstalled(url) {
+    var k = key(url);
+    var list = getPlugins();
+    for (var i = 0; i < list.length; i++) {
+      if (key(list[i].url) === k) return list[i];
+    }
+    return null;
+  }
+
+  function install(item) {
+    if (findInstalled(item.url)) return true;
+    var entry = { url: item.url, status: 1, name: item.name, author: item.author };
+    try {
+      if (Lampa.Plugins && typeof Lampa.Plugins.add === 'function') Lampa.Plugins.add(entry);
+    } catch (e) { /* ниже есть запасной путь */ }
+    if (!findInstalled(item.url)) {
+      var list = getPlugins();
+      list.push(entry);
+      savePlugins(list);
+    }
+    return !!findInstalled(item.url);
+  }
+
+  function uninstall(item) {
+    var found = findInstalled(item.url);
+    if (!found) return true;
+    try {
+      if (Lampa.Plugins && typeof Lampa.Plugins.remove === 'function') Lampa.Plugins.remove(found);
+    } catch (e) { /* ниже есть запасной путь */ }
+    if (findInstalled(item.url)) {
+      var k = key(item.url);
+      savePlugins(getPlugins().filter(function (p) { return key(p.url) !== k; }));
+    }
+    return !findInstalled(item.url);
+  }
+
+  function toggle(item) {
+    var k = key(item.url);
+    var list = getPlugins();
+    var state = null;
+    list.forEach(function (p) {
+      if (key(p.url) === k) { p.status = p.status ? 0 : 1; state = p.status; }
+    });
+    if (state !== null) savePlugins(list);
+    return state;
+  }
+
+  /* ---------- каталог ---------- */
+
+  function toItem(o) {
+    if (!o || typeof o !== 'object') return null;
+    var url = o.link || o.url || o.src;
+    if (!url) return null;
+    return {
+      name: o.name || o.title || url,
+      author: o.author || '',
+      url: url,
+      descr: o.descr || o.description || '',
+      version: o.version || ''
+    };
+  }
+
+  function itemsOf(list) {
+    return (Array.isArray(list) ? list : []).map(toItem).filter(Boolean);
+  }
+
+  // Понимает несколько форм каталога:
+  //  1) [{ "title": "Категория", "plugins": [ {name, author, link, descr, version} ] }]
+  //  2) { "categories": [ ... ] } / { "results": [ ... ] } / { "extensions": [ ... ] }
+  //  3) плоский список плагинов
+  //  4) { "Категория": [ ...плагины... ] }
+  function normalize(data) {
+    var cats = [];
+    var arr = data;
+    if (!Array.isArray(data) && data && typeof data === 'object') {
+      arr = data.categories || data.results || data.extensions || data.plugins || data.items || data.list || data.data;
+      if (!Array.isArray(arr)) {
+        arr = null;
+        Object.keys(data).forEach(function (k) {
+          if (Array.isArray(data[k])) {
+            var items = itemsOf(data[k]);
+            if (items.length) cats.push({ title: k, items: items });
+          }
+        });
+        return cats;
+      }
+    }
+    if (!Array.isArray(arr)) return cats;
+
+    var flat = itemsOf(arr);
+    if (flat.length && flat.length === arr.length) {
+      cats.push({ title: 'Все', items: flat });
+      return cats;
+    }
+    arr.forEach(function (c) {
+      if (!c || typeof c !== 'object') return;
+      var items = itemsOf(c.plugins || c.items || c.results || c.extensions || c.list);
+      if (items.length) cats.push({ title: c.title || c.name || c.category || 'Без категории', items: items });
+    });
+    return cats;
+  }
+
+  function loadCatalog(ok, fail, force) {
+    if (catalogCache && !force) return ok(catalogCache);
+    var xhr = new XMLHttpRequest();
+    activeRequest = xhr;
+    var url = CONFIG.catalog + (CONFIG.catalog.indexOf('?') > -1 ? '&' : '?') + '_=' + Date.now();
+    xhr.open('GET', url, true);
+    xhr.timeout = CONFIG.timeout;
+    xhr.onload = function () {
+      activeRequest = null;
+      if (xhr.status < 200 || xhr.status >= 300) return fail('HTTP ' + xhr.status);
+      try {
+        var cats = normalize(JSON.parse(xhr.responseText));
+        if (!cats.length) return fail('каталог пуст или в неизвестном формате');
+        catalogCache = cats;
+        ok(cats);
+      } catch (e) {
+        fail('не удалось разобрать JSON: ' + e.message);
+      }
+    };
+    xhr.onerror = function () { activeRequest = null; fail('нет соединения'); };
+    xhr.ontimeout = function () { activeRequest = null; fail('превышено время ожидания'); };
+    xhr.send();
+  }
+
+  /* ---------- интерфейс ---------- */
+
+  function openStore(force) {
+    var back = Lampa.Controller.enabled().name;
+    Lampa.Loading.start(function () {
+      if (activeRequest) activeRequest.abort();
+      Lampa.Loading.stop();
+      Lampa.Controller.toggle(back);
+    });
+    loadCatalog(function (cats) {
+      Lampa.Loading.stop();
+      showCategories(cats, back);
+    }, function (err) {
+      Lampa.Loading.stop();
+      noty('Не удалось загрузить каталог: ' + err);
+      Lampa.Controller.toggle(back);
+    }, force === true);
+  }
+
+  function later(fn) { setTimeout(fn, 10); }
+
+  function showCategories(cats, back) {
+    var total = 0;
+    var items = cats.map(function (c, i) {
+      total += c.items.length;
+      return { title: esc(c.title) + ' · ' + c.items.length, index: i };
+    });
+    items.push({ title: 'Другое', separator: true });
+    items.push({ title: 'Обновить каталог', refresh: true });
+    items.push({ title: 'Перезагрузить Lampa (применить изменения)', reload: true });
+
+    Lampa.Select.show({
+      title: esc(CONFIG.name) + ' · ' + total,
+      items: items,
+      onBack: function () { Lampa.Controller.toggle(back); },
+      onSelect: function (a) {
+        Lampa.Controller.toggle(back);
+        if (a.refresh) { later(function () { openStore(true); }); return; }
+        if (a.reload) { window.location.reload(); return; }
+        later(function () { showPlugins(cats[a.index], cats, back); });
+      }
+    });
+  }
+
+  function showPlugins(cat, cats, back) {
+    var items = cat.items.map(function (p, i) {
+      var inst = findInstalled(p.url);
+      var mark = inst ? (inst.status ? '✓ ' : '○ ') : '';
+      var sub = [p.author, p.descr].filter(Boolean).join(' · ');
+      return {
+        title: mark + esc(p.name) + (p.version ? ' v' + esc(p.version) : ''),
+        subtitle: esc(cut(sub, 120)),
+        index: i
+      };
+    });
+
+    Lampa.Select.show({
+      title: esc(cat.title),
+      items: items,
+      onBack: function () {
+        Lampa.Controller.toggle(back);
+        later(function () { showCategories(cats, back); });
+      },
+      onSelect: function (a) {
+        Lampa.Controller.toggle(back);
+        later(function () { showActions(cat.items[a.index], cat, cats, back); });
+      }
+    });
+  }
+
+  function showActions(item, cat, cats, back) {
+    var inst = findInstalled(item.url);
+    var items = [];
+    if (!inst) {
+      items.push({ title: 'Установить', act: 'install' });
+    } else {
+      items.push({ title: inst.status ? 'Выключить' : 'Включить', act: 'toggle' });
+      items.push({ title: 'Удалить', act: 'remove' });
+    }
+    if (item.descr) items.push({ title: 'Описание', subtitle: esc(cut(item.descr, 300)), act: 'info' });
+    items.push({ title: 'Скопировать ссылку', subtitle: esc(cut(item.url, 100)), act: 'copy' });
+
+    var again = function () { later(function () { showActions(item, cat, cats, back); }); };
+
+    Lampa.Select.show({
+      title: esc(item.name),
+      items: items,
+      onBack: function () {
+        Lampa.Controller.toggle(back);
+        later(function () { showPlugins(cat, cats, back); });
+      },
+      onSelect: function (a) {
+        Lampa.Controller.toggle(back);
+        try {
+          if (a.act === 'install') {
+            noty(install(item) ? 'Установлено. Перезагрузите Lampa, чтобы расширение заработало.' : 'Не удалось установить');
+            again();
+          } else if (a.act === 'remove') {
+            noty(uninstall(item) ? 'Удалено. Перезагрузите Lampa.' : 'Не удалось удалить');
+            again();
+          } else if (a.act === 'toggle') {
+            var s = toggle(item);
+            noty(s === null ? 'Расширение не найдено в списке' : (s ? 'Включено' : 'Выключено') + '. Перезагрузите Lampa.');
+            again();
+          } else if (a.act === 'copy') {
+            Lampa.Utils.copyTextToClipboard(item.url, function () {
+              noty('Ссылка скопирована');
+            }, function () {
+              noty('Не удалось скопировать');
+            });
+            again();
+          } else if (a.act === 'info') {
+            noty(cut(item.descr, 300));
+            again();
+          }
+        } catch (e) {
+          noty('Ошибка: ' + e.message);
+          again();
+        }
+      }
+    });
+  }
+
+  /* ---------- точки входа: меню и настройки ---------- */
+
+  function addMenuItem() {
+    if ($('.menu .menu__list .my-store-item').length) return;
+    var li = $('<li class="menu__item selector my-store-item"><div class="menu__ico">' + ICON +
+      '</div><div class="menu__text">' + esc(CONFIG.name) + '</div></li>');
+    li.on('hover:enter', function () { openStore(); });
+    $('.menu .menu__list').eq(0).append(li);
+  }
+
+  function addSettings() {
+    if (!Lampa.SettingsApi) return;
+    Lampa.SettingsApi.addComponent({ component: 'my_store', name: CONFIG.name, icon: ICON });
+    Lampa.SettingsApi.addParam({
+      component: 'my_store',
+      param: { name: 'my_store_open', type: 'button' },
+      field: { name: 'Открыть каталог', description: CONFIG.catalog },
+      onChange: function () { openStore(); }
+    });
+  }
+
+  function init() {
+    try { addMenuItem(); } catch (e) { /* меню может быть недоступно */ }
+    try { addSettings(); } catch (e) { /* настройки необязательны */ }
+  }
+
+  if (window.appready) init();
+  else Lampa.Listener.follow('app', function (e) { if (e.type === 'ready') init(); });
 })();

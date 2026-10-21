@@ -1,0 +1,26 @@
+[
+  {
+    "title": "Пример",
+    "plugins": [
+      {
+        "name": "Привет из магазина",
+        "author": "@salsdfsdfds",
+        "link": "https://salsdfsdfds.github.io/la/hello.js",
+        "descr": "Тестовый плагин: показывает уведомление при запуске Lampa. Нужен, чтобы проверить, что установка из магазина работает.",
+        "version": "1.0.0"
+      }
+    ]
+  },
+  {
+    "title": "Интерфейс",
+    "plugins": [
+      {
+        "name": "Название плагина",
+        "author": "@автор",
+        "link": "https://example.com/plugin.js",
+        "descr": "Что делает плагин для пользователя.",
+        "version": "1.0.0"
+      }
+    ]
+  }
+]
