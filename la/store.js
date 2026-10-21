@@ -15,7 +15,7 @@
 
   var CONFIG = {
     name: 'Мой магазин',
-    catalog: 'https://salexey1.github.io/la/extensions.json',
+    catalog: 'https://lampaplugins.github.io/store/extensions.json',
     timeout: 15000
   };
 
