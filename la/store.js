@@ -2,7 +2,7 @@
     'use strict';
     // https://lampaplugins.github.io/store/store.js
 	Lampa.Lang.add({
-        pirate_store: {
+        my_store: {
             ru: "Пиратские плагины",
             en: "Pirate Store",
             uk: "Піратські плагіни",
@@ -22,7 +22,7 @@
     }
     Lampa.Settings.listener.follow('open', function(e) {
         if (e.name == 'main') {
-            e.body.find('[data-component="pirate_store"]').on('hover:enter', function() {
+            e.body.find('[data-component="my_store"]').on('hover:enter', function() {
                 Lampa.Extensions.show({
                     store: 'https://lampaplugins.github.io/store/extensions.json',
                     with_installed: true
